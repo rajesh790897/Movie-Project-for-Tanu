@@ -1,0 +1,14 @@
+# Core web framework
+Flask>=3.1.0
+
+# MySQL driver
+mysql-connector-python>=9.2.0
+
+# Data manipulation
+pandas>=2.2.3
+
+# Machine-learning / NLP
+scikit-learn>=1.7.0
+
+# Required by pandas read_sql with mysql-connector
+SQLAlchemy>=2.0.39
