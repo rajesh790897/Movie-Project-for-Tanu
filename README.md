@@ -1,291 +1,158 @@
 # Movie Recommendation System
 
-A content-based movie recommendation engine backed by a **MySQL** database, exposed via a **Flask** REST API.
-
----
+A Flask movie recommendation website that now uses live movie data from TMDB instead of a local database. It can also call Gemini 1.5 Flash to generate short, better-written recommendation explanations.
 
 ## Tech Stack
 
-| Layer        | Technology                              |
-|--------------|-----------------------------------------|
-| Database     | MySQL 8+                                |
-| Driver       | mysql-connector-python                  |
-| Data         | pandas                                  |
-| ML / NLP     | scikit-learn (TF-IDF + cosine similarity) |
-| API          | Flask                                   |
-
----
+| Layer | Technology |
+|-------|------------|
+| Web app | Flask |
+| Live movie catalog | TMDB API |
+| AI explanation layer | Gemini 1.5 Flash |
+| Frontend | Jinja2, CSS, JavaScript |
 
 ## Project Structure
 
-```
+```text
 movie-recommendation/
-│
-├── app.py            # Flask REST API & route definitions
-├── recommender.py    # ML pipeline: vectorisation, similarity, recommendations
-├── database.py       # MySQL connection & query helpers
+├── ai_service.py     # Gemini integration
+├── app.py            # Flask website + API routes
+├── recommender.py    # TMDB live-data recommendation engine
+├── templates/        # Jinja2 templates
+├── static/           # CSS and JavaScript assets
 ├── requirements.txt  # Python dependencies
 └── README.md
 ```
 
----
+## API Keys
 
-## Database Setup
+You need:
 
-### 1. Create the database and table
+1. `TMDB_API_KEY` for live movie data. This is required.
+2. `GEMINI_API_KEY` for Gemini 1.5 Flash explanations. This is optional.
 
-```sql
-CREATE DATABASE IF NOT EXISTS movies_db;
+### Windows PowerShell example
 
-USE movies_db;
-
-CREATE TABLE IF NOT EXISTS movies (
-    id       INT AUTO_INCREMENT PRIMARY KEY,
-    title    VARCHAR(255)  NOT NULL,
-    genre    VARCHAR(100),
-    overview TEXT,
-    director VARCHAR(255),
-    cast     VARCHAR(500),
-    rating   FLOAT
-);
+```powershell
+$env:TMDB_API_KEY="your_tmdb_key_here"
+$env:GEMINI_API_KEY="your_gemini_key_here"
 ```
 
-### 2. Insert sample data
-
-```sql
-INSERT INTO movies (title, genre, overview, director, cast, rating) VALUES
-('Inception',       'Sci-Fi Thriller', 'A thief who steals corporate secrets through dream-sharing technology.',          'Christopher Nolan',  'Leonardo DiCaprio, Joseph Gordon-Levitt', 8.8),
-('Interstellar',    'Sci-Fi Drama',    'A team of explorers travel through a wormhole in space.',                         'Christopher Nolan',  'Matthew McConaughey, Anne Hathaway',      8.6),
-('The Dark Knight', 'Action Thriller', 'Batman faces the Joker, a criminal mastermind who wreaks chaos on Gotham City.', 'Christopher Nolan',  'Christian Bale, Heath Ledger',            9.0),
-('The Matrix',      'Sci-Fi Action',   'A hacker discovers reality is a simulation controlled by machines.',              'The Wachowskis',      'Keanu Reeves, Laurence Fishburne',        8.7),
-('Avengers: Endgame','Action Superhero','The Avengers assemble to reverse Thanos\'s actions.',                           'Russo Brothers',      'Robert Downey Jr., Chris Evans',         8.4),
-('Parasite',        'Drama Thriller',  'A poor family schemes to become employed by a wealthy family.',                  'Bong Joon-ho',        'Song Kang-ho, Lee Sun-kyun',              8.5),
-('Pulp Fiction',    'Crime Drama',     'Several stories of criminal Los Angeles interweave.',                             'Quentin Tarantino',   'John Travolta, Uma Thurman',              8.9),
-('The Godfather',   'Crime Drama',     'The powerful Corleone family navigates organized crime in America.',              'Francis Ford Coppola','Marlon Brando, Al Pacino',                9.2);
-```
-
-### 3. Configure credentials
-
-Open `database.py` and update the `DB_CONFIG` dictionary:
-
-```python
-DB_CONFIG = {
-    "host":     "localhost",
-    "port":     3306,
-    "user":     "root",       # ← your MySQL username
-    "password": "password",   # ← your MySQL password
-    "database": "movies_db",
-}
-```
-
----
+If you skip `GEMINI_API_KEY`, the app still works and falls back to rule-based explanation text.
 
 ## Installation
 
-```bash
-# 1. Clone / navigate to the project directory
+```powershell
 cd movie-recommendation
-
-# 2. Create and activate a virtual environment (recommended)
-python -m venv venv
-venv\Scripts\activate        # Windows
-# source venv/bin/activate   # macOS / Linux
-
-# 3. Install dependencies
+python -m venv .venv
+.\.venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
----
+## Running the App
 
-## Running the API
-
-```bash
+```powershell
 python app.py
 ```
 
-The server starts on `http://localhost:5000`.
+Open:
 
----
+- Website: `http://localhost:5000`
+- API index: `http://localhost:5000/api`
+
+## Web UI Features
+
+- Live movie search suggestions from TMDB popular and trending titles
+- Recommendation cards with posters, overview, genres, year, and rating
+- Preference filters for genre, director, cast, and minimum rating
+- Gemini-generated summary and per-movie reasons when configured
+- Responsive UI for desktop and mobile
 
 ## API Reference
 
 ### `GET /recommend`
 
-Returns content-based recommendations for a given movie.
+Returns online recommendations for a movie title.
 
-| Parameter | Type   | Required | Default | Description                       |
-|-----------|--------|----------|---------|-----------------------------------|
-| `movie`   | string | Yes      | –       | Title of the seed movie           |
-| `top_n`   | int    | No       | 5       | Number of recommendations         |
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `movie` | string | Yes | - | Seed movie title |
+| `top_n` | int | No | 5 | Number of recommendations |
+| `preferred_genres` | string | No | - | Comma-separated genre preferences |
+| `preferred_directors` | string | No | - | Comma-separated director preferences |
+| `preferred_cast` | string | No | - | Comma-separated cast preferences |
+| `min_rating` | float | No | - | Minimum TMDB rating |
 
-**Example request**
+Example:
 
+```text
+GET /recommend?movie=Inception&top_n=5&preferred_genres=Sci-Fi,Thriller&min_rating=7.5
 ```
-GET /recommend?movie=Inception&top_n=5
-```
 
-**Example response**
+Response shape:
 
 ```json
 {
   "input_movie": "Inception",
+  "source": "tmdb",
+  "seed_movie": {
+    "title": "Inception",
+    "year": "2010"
+  },
+  "ai_summary": "These picks stay close to Inception's cerebral sci-fi tone.",
+  "ai_enabled": true,
+  "ai_model": "gemini-1.5-flash",
   "recommendations": [
-    "Interstellar",
-    "The Dark Knight",
-    "The Matrix",
-    "Parasite",
-    "Pulp Fiction"
+    {
+      "title": "Interstellar",
+      "rating": 8.4,
+      "genres": ["Adventure", "Drama", "Science Fiction"],
+      "ai_reason": "It matches your taste for cerebral science fiction with emotional scale."
+    }
   ]
 }
 ```
-
----
 
 ### `GET /recommend/genre`
 
-Returns top-rated movies filtered by genre.
-
-| Parameter | Type   | Required | Default | Description                |
-|-----------|--------|----------|---------|----------------------------|
-| `genre`   | string | Yes      | –       | Genre keyword (partial OK) |
-| `top_n`   | int    | No       | 5       | Number of results          |
-
-**Example request**
-
-```
-GET /recommend/genre?genre=Action&top_n=3
-```
-
-**Example response**
-
-```json
-{
-  "genre": "Action",
-  "recommendations": [
-    { "title": "The Dark Knight", "rating": 9.0 },
-    { "title": "The Matrix",      "rating": 8.7 },
-    { "title": "Avengers: Endgame","rating": 8.4 }
-  ]
-}
-```
-
----
+Returns live top movies for a genre from TMDB.
 
 ### `GET /recommend/top-rated`
 
-Returns the globally top-rated movies.
-
-| Parameter | Type | Required | Default | Description           |
-|-----------|------|----------|---------|-----------------------|
-| `limit`   | int  | No       | 10      | Number of movies      |
-
-**Example request**
-
-```
-GET /recommend/top-rated?limit=5
-```
-
-**Example response**
-
-```json
-{
-  "top_rated_movies": [
-    { "title": "The Godfather",   "rating": 9.2 },
-    { "title": "The Dark Knight", "rating": 9.0 },
-    { "title": "Pulp Fiction",    "rating": 8.9 },
-    { "title": "Inception",       "rating": 8.8 },
-    { "title": "The Matrix",      "rating": 8.7 }
-  ]
-}
-```
-
----
+Returns live top-rated movies from TMDB.
 
 ### `GET /movies`
 
-Returns an alphabetically sorted list of all movie titles.
-
-```
-GET /movies
-```
-
----
+Returns cached popular and trending movie titles for autocomplete.
 
 ### `POST /cache/reload`
 
-Rebuilds the TF-IDF similarity matrix from the current database state without restarting the server. Call this after inserting new movies.
-
-```
-POST /cache/reload
-```
-
----
+Clears cached TMDB metadata and title suggestions.
 
 ### `GET /health`
 
-Simple liveness check.
-
-```json
-{ "status": "ok" }
-```
-
----
+Returns service health plus whether Gemini is configured.
 
 ## How It Works
 
-```
-MySQL DB
-   │
-   ▼
-database.py  ──► fetch_movies()   → raw DataFrame
-   │
-   ▼
+```text
+TMDB API
+   |
+   v
 recommender.py
-   ├── _build_content_column()   → combines genre + overview + director + cast
-   ├── TfidfVectorizer           → converts text to numeric vectors
-   ├── cosine_similarity()       → (N × N) similarity matrix  [cached]
-   └── recommend_movies()        → looks up seed movie, ranks neighbours
-   │
-   ▼
-app.py (Flask)
-   └── /recommend  /recommend/genre  /recommend/top-rated  /movies
+   |- search movie by title
+   |- fetch recommendations, similar titles, and genre-based candidates
+   |- rank results using TMDB metadata + user preferences
+   |- optionally ask Gemini 1.5 Flash for summary and reasons
+   |
+   v
+app.py
+   |- renders website
+   |- exposes JSON API routes
 ```
 
-### Why TF-IDF + Cosine Similarity?
+## Notes
 
-- **TF-IDF** weights terms by how distinctive they are across the corpus,
-  so common words ("the", "a") are suppressed while genre-specific or
-  director-specific terms get boosted.
-- **Cosine similarity** measures the angle between two document vectors,
-  making it length-independent and well-suited to sparse text features.
-
-### Caching
-
-The similarity matrix is computed once and kept in memory (`_cosine_sim`).
-For a database with thousands of movies this is far faster than
-recomputing on every request. Use `POST /cache/reload` to refresh it
-after a batch import.
-
----
-
-## Error Responses
-
-All errors return JSON in the format:
-
-```json
-{ "error": "Human-readable message" }
-```
-
-| HTTP Status | Meaning                                    |
-|-------------|--------------------------------------------|
-| 400         | Bad or missing query parameter             |
-| 404         | Movie / genre not found in the database    |
-| 500         | Database or internal server error          |
-
----
-
-## Production Notes
-
-- Replace `app.run(debug=True)` with a WSGI server such as **Gunicorn** (Linux/macOS) or **Waitress** (Windows).
-- Store DB credentials in environment variables, not hard-coded in `database.py`.
-- For datasets with 100 k+ movies, replace `cosine_similarity` with `linear_kernel` to reduce memory usage.
+- `database.py` is now legacy and is no longer used by the app runtime.
+- `POST /seed/movies` is retained only as a compatibility endpoint and does nothing.
+- For production on Windows, use a proper WSGI server such as Waitress instead of Flask debug mode.

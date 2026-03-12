@@ -1,27 +1,10 @@
-"""
-app.py
-------
-Flask REST API for the Movie Recommendation System.
+"""Flask app exposing both a web UI and REST API endpoints."""
 
-Endpoints
----------
-GET /recommend?movie=<title>&top_n=<int>
-    Content-based recommendations for a given movie title.
+import os
 
-GET /recommend/genre?genre=<genre>&top_n=<int>
-    Top-rated movies filtered by genre.
+from flask import Flask, flash, jsonify, render_template, request
 
-GET /recommend/top-rated?limit=<int>
-    Globally top-rated movies.
-
-GET /movies
-    List all available movie titles.
-
-POST /cache/reload
-    Force-refresh the in-memory similarity cache.
-"""
-
-from flask import Flask, request, jsonify
+from ai_service import gemini_enabled
 
 from recommender import (
     recommend_movies_with_preferences,
@@ -30,9 +13,9 @@ from recommender import (
     list_all_titles,
     reload_cache,
 )
-from database import seed_movies
 
 app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
 
 
 # ---------------------------------------------------------------------------
@@ -49,15 +32,135 @@ def _split_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _parse_preferences(source) -> dict:
+    """Build a preference dictionary from request args or form data."""
+    preferred_genres = _split_csv(source.get("preferred_genres", ""))
+    preferred_directors = _split_csv(source.get("preferred_directors", ""))
+    preferred_cast = _split_csv(source.get("preferred_cast", ""))
+
+    min_rating_raw = source.get("min_rating", "").strip()
+    min_rating = None
+    if min_rating_raw:
+        min_rating = float(min_rating_raw)
+
+    return {
+        "preferred_genres": preferred_genres,
+        "preferred_directors": preferred_directors,
+        "preferred_cast": preferred_cast,
+        "min_rating": min_rating,
+    }
+
+
+def _has_any_preferences(preferences: dict) -> bool:
+    """Check if at least one preference is provided by the user."""
+    return any(
+        [
+            preferences["preferred_genres"],
+            preferences["preferred_directors"],
+            preferences["preferred_cast"],
+            preferences["min_rating"] is not None,
+        ]
+    )
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
-@app.route("/", methods=["GET"])
+@app.route("/", methods=["GET", "POST"])
 def home():
-    """API index route to avoid 404 on the base URL."""
+    """Render the website home page and process recommendation requests."""
+    titles: list[str] = []
+    top_rated_movies: list[dict] = []
+    recommendations: list[dict] = []
+    selected_movie: dict | None = None
+    ai_summary = ""
+    ai_used = False
+    ai_model = ""
+    request_state = {
+        "movie": "",
+        "top_n": 6,
+        "preferred_genres": "",
+        "preferred_directors": "",
+        "preferred_cast": "",
+        "min_rating": "",
+    }
+    service_error = None
+
+    try:
+        titles = list_all_titles()
+        top_rated_movies = recommend_top_rated(limit=8)
+    except RuntimeError as e:
+        service_error = str(e)
+
+    if request.method == "POST" and not service_error:
+        request_state = {
+            "movie": request.form.get("movie", "").strip(),
+            "top_n": request.form.get("top_n", "6").strip(),
+            "preferred_genres": request.form.get("preferred_genres", "").strip(),
+            "preferred_directors": request.form.get("preferred_directors", "").strip(),
+            "preferred_cast": request.form.get("preferred_cast", "").strip(),
+            "min_rating": request.form.get("min_rating", "").strip(),
+        }
+
+        if not request_state["movie"]:
+            flash("Pick a movie title before requesting recommendations.", "error")
+        else:
+            try:
+                top_n = int(request_state["top_n"] or "6")
+                if top_n < 1 or top_n > 20:
+                    raise ValueError
+            except ValueError:
+                flash("'Top picks' must be a number from 1 to 20.", "error")
+                top_n = 6
+
+            try:
+                min_rating_raw = request_state["min_rating"]
+                if min_rating_raw:
+                    min_rating_value = float(min_rating_raw)
+                    if min_rating_value < 0 or min_rating_value > 10:
+                        raise ValueError
+
+                preferences = _parse_preferences(request.form)
+
+                result_bundle = recommend_movies_with_preferences(
+                    request_state["movie"],
+                    preferences=preferences,
+                    top_n=top_n,
+                )
+                recommendations = result_bundle["recommendations"]
+                selected_movie = result_bundle["seed_movie"]
+                ai_summary = result_bundle["ai_summary"]
+                ai_used = result_bundle["ai_enabled"]
+                ai_model = result_bundle["ai_model"]
+            except ValueError as e:
+                flash(str(e), "error")
+            except RuntimeError as e:
+                flash(str(e), "error")
+
+    return render_template(
+        "index.html",
+        titles=titles,
+        top_rated_movies=top_rated_movies,
+        recommendations=recommendations,
+        selected_movie=selected_movie,
+        ai_summary=ai_summary,
+        ai_used=ai_used,
+        ai_model=ai_model,
+        gemini_ready=gemini_enabled(),
+        request_state=request_state,
+        service_error=service_error,
+    )
+
+
+@app.route("/api", methods=["GET"])
+def api_home():
+    """API index route."""
     return jsonify({
-        "message": "Movie Recommendation API is running.",
+        "message": "Movie Recommendation API is running with live TMDB data.",
+        "source": "tmdb",
+        "gemini_enabled": gemini_enabled(),
+        "required_environment_variables": ["TMDB_API_KEY", "GEMINI_API_KEY (optional)"],
         "endpoints": {
             "health": "/health",
             "preferences_questions": "/preferences/questions",
@@ -68,17 +171,17 @@ def home():
             "recommend_genre": "/recommend/genre?genre=Action&top_n=5",
             "top_rated": "/recommend/top-rated?limit=10",
             "movies": "/movies",
-            "seed_movies": "POST /seed/movies",
             "cache_reload": "POST /cache/reload",
         },
     }), 200
 
 
 @app.route("/preferences/questions", methods=["GET"])
+@app.route("/api/preferences/questions", methods=["GET"])
 def preference_questions():
     """Return preference fields expected before recommendations."""
     return jsonify({
-        "message": "Provide at least one preference before requesting recommendations.",
+        "message": "Preferences are optional, but they improve ranking and Gemini explanations.",
         "fields": [
             "preferred_genres (comma separated)",
             "preferred_directors (comma separated)",
@@ -93,6 +196,7 @@ def preference_questions():
     }), 200
 
 @app.route("/recommend", methods=["GET"])
+@app.route("/api/recommend", methods=["GET"])
 def recommend():
     """
     GET /recommend?movie=Inception&top_n=5
@@ -134,19 +238,6 @@ def recommend():
         except ValueError:
             return _error("'min_rating' must be a valid number.", 400)
 
-    if not any([preferred_genres, preferred_directors, preferred_cast, min_rating_raw]):
-        return jsonify({
-            "error": "Please provide user preferences before requesting recommendations.",
-            "required": "At least one preference is required.",
-            "fields": [
-                "preferred_genres",
-                "preferred_directors",
-                "preferred_cast",
-                "min_rating",
-            ],
-            "questions_endpoint": "/preferences/questions",
-        }), 400
-
     preferences = {
         "preferred_genres": preferred_genres,
         "preferred_directors": preferred_directors,
@@ -155,7 +246,7 @@ def recommend():
     }
 
     try:
-        recommendations = recommend_movies_with_preferences(
+        result_bundle = recommend_movies_with_preferences(
             movie_title,
             preferences=preferences,
             top_n=top_n,
@@ -168,11 +259,17 @@ def recommend():
     return jsonify({
         "input_movie": movie_title,
         "preferences_used": preferences,
-        "recommendations": recommendations,
+        "source": result_bundle["source"],
+        "seed_movie": result_bundle["seed_movie"],
+        "ai_summary": result_bundle["ai_summary"],
+        "ai_enabled": result_bundle["ai_enabled"],
+        "ai_model": result_bundle["ai_model"],
+        "recommendations": result_bundle["recommendations"],
     }), 200
 
 
 @app.route("/recommend/genre", methods=["GET"])
+@app.route("/api/recommend/genre", methods=["GET"])
 def recommend_genre():
     """
     GET /recommend/genre?genre=Action&top_n=5
@@ -209,6 +306,7 @@ def recommend_genre():
 
 
 @app.route("/recommend/top-rated", methods=["GET"])
+@app.route("/api/recommend/top-rated", methods=["GET"])
 def top_rated():
     """
     GET /recommend/top-rated?limit=10
@@ -237,12 +335,12 @@ def top_rated():
 
 
 @app.route("/movies", methods=["GET"])
+@app.route("/api/movies", methods=["GET"])
 def list_movies():
     """
     GET /movies
 
-    Returns an alphabetically sorted list of all movie titles in the DB.
-    Useful for populating a search/autocomplete UI.
+    Returns a cached set of popular live movie titles for autocomplete.
     """
     try:
         titles = list_all_titles()
@@ -256,13 +354,12 @@ def list_movies():
 
 
 @app.route("/cache/reload", methods=["POST"])
+@app.route("/api/cache/reload", methods=["POST"])
 def cache_reload():
     """
     POST /cache/reload
 
-    Forces a full reload of the similarity matrix from the database.
-    Call this endpoint after inserting new movies into the DB without
-    restarting the server.
+    Clears cached TMDB metadata and title suggestions.
     """
     try:
         reload_cache()
@@ -273,21 +370,15 @@ def cache_reload():
 
 
 @app.route("/seed/movies", methods=["POST"])
+@app.route("/api/seed/movies", methods=["POST"])
 def seed_db_movies():
     """
     POST /seed/movies
 
-    Inserts 30 sample movies if missing and refreshes in-memory cache.
+    Legacy endpoint retained for compatibility.
     """
-    try:
-        inserted_count = seed_movies()
-        reload_cache()
-    except RuntimeError as e:
-        return _error(str(e), 500)
-
     return jsonify({
-        "message": "Movie seed completed.",
-        "inserted_count": inserted_count,
+        "message": "Seeding is no longer required. Recommendations now use live TMDB data.",
     }), 200
 
 
@@ -298,7 +389,11 @@ def seed_db_movies():
 @app.route("/health", methods=["GET"])
 def health():
     """Simple liveness probe."""
-    return jsonify({"status": "ok"}), 200
+    return jsonify({
+        "status": "ok",
+        "source": "tmdb",
+        "gemini_enabled": gemini_enabled(),
+    }), 200
 
 
 # ---------------------------------------------------------------------------
