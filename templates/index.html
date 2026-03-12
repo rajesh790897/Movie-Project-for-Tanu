@@ -15,7 +15,7 @@
 <section class="panel error-panel">
   <h2>Configuration issue</h2>
   <p>{{ service_error }}</p>
-  <p>Add your TMDB API key to the <strong>TMDB_API_KEY</strong> environment variable, then reload the page.</p>
+  <p>Add your OMDb API key to the <strong>OMDB_API_KEY</strong> environment variable, then reload the page.</p>
 </section>
 {% endif %}
 
@@ -25,7 +25,7 @@
     <p class="panel-subtitle">Preferences are optional, but they sharpen ranking and Gemini explanations.</p>
 
     <div class="status-strip">
-      <span class="status-pill online">TMDB live data</span>
+      <span class="status-pill online">OMDb live data</span>
       <span class="status-pill {% if gemini_ready %}ready{% else %}waiting{% endif %}">
         {% if gemini_ready %}Gemini 1.5 Flash ready{% else %}Gemini optional{% endif %}
       </span>
@@ -101,7 +101,7 @@
             {% if selected_movie.year %}<span>{{ selected_movie.year }}</span>{% endif %}
             {% if selected_movie.rating %}<span>{{ '%.1f'|format(selected_movie.rating) }}/10</span>{% endif %}
           </p>
-          <p class="card-copy">{{ selected_movie.overview or 'No overview available from TMDB for this title.' }}</p>
+          <p class="card-copy">{{ selected_movie.overview or 'No overview available from OMDb for this title.' }}</p>
         </div>
       </article>
     {% endif %}
@@ -117,8 +117,8 @@
             <div class="movie-copy">
               <div class="title-row">
                 <h3>{{ movie.title }}</h3>
-                {% if movie.tmdb_url %}
-                  <a class="external-link" href="{{ movie.tmdb_url }}" target="_blank" rel="noreferrer">TMDB</a>
+                {% if movie.external_url %}
+                  <a class="external-link" href="{{ movie.external_url }}" target="_blank" rel="noreferrer">{{ movie.external_label or 'Open' }}</a>
                 {% endif %}
               </div>
               <p class="meta-line">
@@ -126,7 +126,7 @@
                 {% if movie.rating %}<span>{{ '%.1f'|format(movie.rating) }}/10</span>{% endif %}
                 {% if movie.genres %}<span>{{ movie.genres[:3]|join(' • ') }}</span>{% endif %}
               </p>
-              <p class="card-copy">{{ movie.overview or 'No overview available from TMDB for this title.' }}</p>
+              <p class="card-copy">{{ movie.overview or 'No overview available from OMDb for this title.' }}</p>
               {% if movie.ai_reason %}
                 <p class="reason-line">{{ movie.ai_reason }}</p>
               {% elif movie.match_reason %}
@@ -147,7 +147,7 @@
 
 <section id="top-rated" class="panel top-rated-panel">
   <div class="panel-head">
-    <h2>Top-rated from TMDB</h2>
+    <h2>Top-rated from OMDb catalog</h2>
     <a class="api-link" href="/api/recommend/top-rated?limit=8" target="_blank" rel="noreferrer">Open API JSON</a>
   </div>
   <div class="top-rated-grid">

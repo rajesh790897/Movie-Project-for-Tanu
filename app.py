@@ -5,6 +5,7 @@ import os
 from flask import Flask, flash, jsonify, render_template, request
 
 from ai_service import gemini_enabled
+from env_utils import get_env_value, load_local_env
 
 from recommender import (
     recommend_movies_with_preferences,
@@ -15,7 +16,8 @@ from recommender import (
 )
 
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
+load_local_env()
+app.secret_key = get_env_value("FLASK_SECRET_KEY", "dev-secret-key")
 
 
 # ---------------------------------------------------------------------------
@@ -156,11 +158,26 @@ def home():
 @app.route("/api", methods=["GET"])
 def api_home():
     """API index route."""
+    omdb_ready = bool(os.getenv("OMDB_API_KEY", "").strip())
+    try:
+        from database import SAMPLE_MOVIES as _  # noqa: F401, PLC0415
+        mysql_ready = True
+    except Exception:
+        mysql_ready = False
     return jsonify({
-        "message": "Movie Recommendation API is running with live TMDB data.",
-        "source": "tmdb",
-        "gemini_enabled": gemini_enabled(),
-        "required_environment_variables": ["TMDB_API_KEY", "GEMINI_API_KEY (optional)"],
+        "message": "Movie Recommendation API – 3 data sources: MySQL, OMDb, Gemini.",
+        "data_sources": {
+            "mysql": {"enabled": mysql_ready, "description": "Local DB (MySQL) or 30-movie sample fallback"},
+            "omdb": {"enabled": omdb_ready, "description": "Live OMDb movie metadata"},
+            "gemini": {"enabled": gemini_enabled(), "description": "AI candidate suggestions & explanations"},
+        },
+        "required_environment_variables": ["OMDB_API_KEY"],
+        "optional_environment_variables": ["GEMINI_API_KEY", "GEMINI_MODEL"],
+        "notes": [
+            "MySQL source uses live DB when available, otherwise falls back to 30 embedded sample movies.",
+            "OMDb provides rich live metadata (poster, IMDb rating, cast, etc.).",
+            "Gemini improves candidate selection and generates recommendation explanations.",
+        ],
         "endpoints": {
             "health": "/health",
             "preferences_questions": "/preferences/questions",
@@ -260,6 +277,7 @@ def recommend():
         "input_movie": movie_title,
         "preferences_used": preferences,
         "source": result_bundle["source"],
+        "data_sources": result_bundle.get("data_sources", []),
         "seed_movie": result_bundle["seed_movie"],
         "ai_summary": result_bundle["ai_summary"],
         "ai_enabled": result_bundle["ai_enabled"],
@@ -340,7 +358,7 @@ def list_movies():
     """
     GET /movies
 
-    Returns a cached set of popular live movie titles for autocomplete.
+    Returns a cached set of live OMDb movie titles for autocomplete.
     """
     try:
         titles = list_all_titles()
@@ -359,7 +377,7 @@ def cache_reload():
     """
     POST /cache/reload
 
-    Clears cached TMDB metadata and title suggestions.
+    Clears cached OMDb metadata and title suggestions.
     """
     try:
         reload_cache()
@@ -375,11 +393,21 @@ def seed_db_movies():
     """
     POST /seed/movies
 
-    Legacy endpoint retained for compatibility.
+    Insert sample movies into MySQL so the MySQL source has data.
+    Falls back gracefully when MySQL is not configured.
     """
-    return jsonify({
-        "message": "Seeding is no longer required. Recommendations now use live TMDB data.",
-    }), 200
+    try:
+        from database import seed_movies  # noqa: PLC0415
+        inserted = seed_movies()
+        return jsonify({
+            "message": f"Seeded {inserted} movies into MySQL.",
+            "source": "mysql",
+        }), 200
+    except RuntimeError as e:
+        return jsonify({
+            "message": "MySQL is not available; using embedded sample data instead.",
+            "detail": str(e),
+        }), 200
 
 
 # ---------------------------------------------------------------------------
@@ -389,10 +417,19 @@ def seed_db_movies():
 @app.route("/health", methods=["GET"])
 def health():
     """Simple liveness probe."""
+    omdb_ready = bool(os.getenv("OMDB_API_KEY", "").strip())
+    try:
+        from database import SAMPLE_MOVIES as _  # noqa: F401, PLC0415
+        mysql_ready = True
+    except Exception:
+        mysql_ready = False
     return jsonify({
         "status": "ok",
-        "source": "tmdb",
-        "gemini_enabled": gemini_enabled(),
+        "data_sources": {
+            "mysql": mysql_ready,
+            "omdb": omdb_ready,
+            "gemini": gemini_enabled(),
+        },
     }), 200
 
 

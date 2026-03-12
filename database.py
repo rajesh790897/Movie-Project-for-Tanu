@@ -5,9 +5,28 @@ Handles MySQL database connection and fetching movie records
 into a pandas DataFrame.
 """
 
-import mysql.connector
-import pandas as pd
-from mysql.connector import Error
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pandas as pd  # used only for type annotations
+
+try:
+    import mysql.connector
+    from mysql.connector import Error as _MySQLError
+    Error = _MySQLError
+    _mysql_available = True
+except ImportError:
+    mysql = None  # type: ignore[assignment]
+    _mysql_available = False
+    Error = Exception  # type: ignore[misc, assignment]
+
+try:
+    import pandas as pd  # type: ignore[no-redef]
+    _pandas_available = True
+except ImportError:
+    _pandas_available = False
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +81,11 @@ def get_connection():
     Create and return a MySQL connection using the DB_CONFIG settings.
     Raises a RuntimeError if the connection cannot be established.
     """
+    if not _mysql_available:
+        raise RuntimeError(
+            "mysql-connector-python is not installed. "
+            "Run: pip install mysql-connector-python pandas"
+        )
     try:
         connection = mysql.connector.connect(**DB_CONFIG)
         if connection.is_connected():
@@ -83,6 +107,11 @@ def fetch_movies() -> pd.DataFrame:
         DataFrame with one row per movie. Empty DataFrame if the table
         has no rows.
     """
+    if not _mysql_available or not _pandas_available:
+        raise RuntimeError(
+            "MySQL or pandas dependencies are not installed. "
+            "Run: pip install mysql-connector-python pandas"
+        )
     query = """
         SELECT
             id,

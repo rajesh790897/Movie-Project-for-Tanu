@@ -1,3 +1,6 @@
+# Environment variable loading (.env file support)
+python-dotenv>=1.0.0
+
 # Core web framework
 Flask>=3.1.0
 
@@ -6,3 +9,7 @@ requests>=2.32.3
 
 # Gemini SDK for AI explanations
 google-generativeai>=0.8.5
+
+# MySQL database support (optional – used when MySQL is configured)
+mysql-connector-python>=8.0.0
+pandas>=2.0.0

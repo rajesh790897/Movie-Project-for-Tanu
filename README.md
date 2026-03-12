@@ -1,13 +1,13 @@
 # Movie Recommendation System
 
-A Flask movie recommendation website that now uses live movie data from TMDB instead of a local database. It can also call Gemini 1.5 Flash to generate short, better-written recommendation explanations.
+A Flask movie recommendation website that now uses live movie data from OMDb instead of a local database. It can also call Gemini 1.5 Flash to improve candidate selection and generate better recommendation explanations.
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
 | Web app | Flask |
-| Live movie catalog | TMDB API |
+| Live movie catalog | OMDb API |
 | AI explanation layer | Gemini 1.5 Flash |
 | Frontend | Jinja2, CSS, JavaScript |
 
@@ -17,7 +17,7 @@ A Flask movie recommendation website that now uses live movie data from TMDB ins
 movie-recommendation/
 ├── ai_service.py     # Gemini integration
 ├── app.py            # Flask website + API routes
-├── recommender.py    # TMDB live-data recommendation engine
+├── recommender.py    # OMDb live-data recommendation engine
 ├── templates/        # Jinja2 templates
 ├── static/           # CSS and JavaScript assets
 ├── requirements.txt  # Python dependencies
@@ -28,13 +28,13 @@ movie-recommendation/
 
 You need:
 
-1. `TMDB_API_KEY` for live movie data. This is required.
-2. `GEMINI_API_KEY` for Gemini 1.5 Flash explanations. This is optional.
+1. `OMDB_API_KEY` for live movie data. This is required.
+2. `GEMINI_API_KEY` for Gemini 1.5 Flash suggestions and explanations. This is optional.
 
 ### Windows PowerShell example
 
 ```powershell
-$env:TMDB_API_KEY="your_tmdb_key_here"
+$env:OMDB_API_KEY="your_omdb_key_here"
 $env:GEMINI_API_KEY="your_gemini_key_here"
 ```
 
@@ -62,7 +62,7 @@ Open:
 
 ## Web UI Features
 
-- Live movie search suggestions from TMDB popular and trending titles
+- Live movie search suggestions from OMDb search results and validated title hints
 - Recommendation cards with posters, overview, genres, year, and rating
 - Preference filters for genre, director, cast, and minimum rating
 - Gemini-generated summary and per-movie reasons when configured
@@ -81,7 +81,7 @@ Returns online recommendations for a movie title.
 | `preferred_genres` | string | No | - | Comma-separated genre preferences |
 | `preferred_directors` | string | No | - | Comma-separated director preferences |
 | `preferred_cast` | string | No | - | Comma-separated cast preferences |
-| `min_rating` | float | No | - | Minimum TMDB rating |
+| `min_rating` | float | No | - | Minimum IMDb rating |
 
 Example:
 
@@ -94,7 +94,7 @@ Response shape:
 ```json
 {
   "input_movie": "Inception",
-  "source": "tmdb",
+  "source": "omdb",
   "seed_movie": {
     "title": "Inception",
     "year": "2010"
@@ -106,7 +106,7 @@ Response shape:
     {
       "title": "Interstellar",
       "rating": 8.4,
-      "genres": ["Adventure", "Drama", "Science Fiction"],
+      "genres": ["Adventure", "Drama", "Sci-Fi"],
       "ai_reason": "It matches your taste for cerebral science fiction with emotional scale."
     }
   ]
@@ -115,19 +115,19 @@ Response shape:
 
 ### `GET /recommend/genre`
 
-Returns live top movies for a genre from TMDB.
+Returns genre-matched live movies from the OMDb-backed catalog.
 
 ### `GET /recommend/top-rated`
 
-Returns live top-rated movies from TMDB.
+Returns the highest-rated movies from the live OMDb-backed catalog.
 
 ### `GET /movies`
 
-Returns cached popular and trending movie titles for autocomplete.
+Returns cached live movie titles for autocomplete.
 
 ### `POST /cache/reload`
 
-Clears cached TMDB metadata and title suggestions.
+Clears cached OMDb metadata and title suggestions.
 
 ### `GET /health`
 
@@ -136,14 +136,15 @@ Returns service health plus whether Gemini is configured.
 ## How It Works
 
 ```text
-TMDB API
+OMDb API
    |
    v
 recommender.py
-   |- search movie by title
-   |- fetch recommendations, similar titles, and genre-based candidates
-   |- rank results using TMDB metadata + user preferences
-   |- optionally ask Gemini 1.5 Flash for summary and reasons
+   |- fetch seed movie details by title
+   |- gather live OMDb titles and metadata
+   |- optionally ask Gemini 1.5 Flash for candidate titles
+   |- rank results using OMDb metadata + user preferences
+   |- optionally ask Gemini again for summary and reasons
    |
    v
 app.py
@@ -155,4 +156,5 @@ app.py
 
 - `database.py` is now legacy and is no longer used by the app runtime.
 - `POST /seed/movies` is retained only as a compatibility endpoint and does nothing.
+- OMDb does not provide native similar, trending, or top-rated discovery endpoints, so the app uses OMDb live metadata plus Gemini and a validated catalog strategy.
 - For production on Windows, use a proper WSGI server such as Waitress instead of Flask debug mode.
