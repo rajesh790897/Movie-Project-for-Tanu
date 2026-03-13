@@ -10,7 +10,7 @@ from typing import Any
 
 import requests
 
-from ai_service import generate_candidate_titles, generate_recommendation_story
+from ai_service import gemini_enabled, generate_candidate_titles, generate_recommendation_story
 from env_utils import get_env_value
 
 
@@ -68,6 +68,12 @@ _movie_cache: dict[str, dict[str, Any]] = {}
 def _normalise_title(title: str) -> str:
     """Lower-case and collapse whitespace for matching titles."""
     return re.sub(r"\s+", " ", title.strip().lower())
+
+
+def _is_omdb_limit_error(error: Exception) -> bool:
+    """Detect OMDb quota/auth limit style errors from exception text."""
+    message = str(error).lower()
+    return any(token in message for token in ["limit", "unauthorized", "invalid api key", "too many"])
 
 
 def _require_omdb_api_key() -> str:
@@ -195,6 +201,33 @@ def _normalise_db_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _minimal_movie_from_title(title: str, source: str = "gemini") -> dict[str, Any]:
+    """Create a metadata-light movie record when only a title is available."""
+    clean_title = str(title).strip() or "Untitled"
+    return {
+        "id": f"{source}_{_normalise_title(clean_title).replace(' ', '_')}",
+        "title": clean_title,
+        "overview": "",
+        "rating": 0.0,
+        "rating_count": 0,
+        "popularity": 0.0,
+        "year": "",
+        "release_date": "",
+        "genres": [],
+        "poster_url": "",
+        "backdrop_url": "",
+        "external_url": "",
+        "external_label": "",
+        "director": "",
+        "cast": [],
+        "runtime": "",
+        "language": "",
+        "awards": "",
+        "rotten_tomatoes": "",
+        "source": source,
+    }
+
+
 def _get_db_candidates() -> list[dict[str, Any]]:
     """Return candidate movies from MySQL, falling back to embedded sample data."""
     movies: list[dict[str, Any]] = []
@@ -270,7 +303,9 @@ def _search_movies(search_term: str, pages: int = 1) -> list[dict[str, Any]]:
     for page in range(1, pages + 1):
         try:
             payload = _omdb_get({"s": search_term, "type": "movie", "page": page})
-        except ValueError:
+        except (ValueError, RuntimeError):
+            # If OMDb fails (for example invalid/expired key), fall back to
+            # local candidate sources instead of failing the full request.
             break
         for item in payload.get("Search", []):
             imdb_id = str(item.get("imdbID", "")).strip().lower()
@@ -402,8 +437,13 @@ def _candidate_pool(seed_movie: dict[str, Any], preferences: dict[str, Any], top
         seen_titles.add(title_key)
         try:
             movie = _get_movie_by_title(title)
-        except ValueError:
-            continue
+        except (ValueError, RuntimeError):
+            # When OMDb is unavailable or rate-limited, preserve Gemini title
+            # candidates using a metadata-light fallback record.
+            if bool(ai_titles_result.get("enabled")):
+                movie = _minimal_movie_from_title(title, source="gemini")
+            else:
+                continue
         movie_id = str(movie.get("id", "")).lower()
         if movie_id and movie_id in seen_ids:
             continue
@@ -467,13 +507,18 @@ def recommend_movies_with_preferences(
     # Try OMDb first for rich metadata; fall back to DB when OMDb key is absent.
     try:
         seed_movie = _get_movie_by_title(movie_title)
-    except RuntimeError:
+    except (RuntimeError, ValueError) as omdb_error:
         db_movies = _get_db_candidates()
         title_key = _normalise_title(movie_title)
         seed_movie = next(
             (m for m in db_movies if _normalise_title(m.get("title", "")) == title_key),
             None,
         )
+        # If OMDb quota/auth fails and DB has no seed match, allow Gemini-first
+        # recommendation generation from the user-provided title.
+        if seed_movie is None and _is_omdb_limit_error(omdb_error) and gemini_enabled():
+            seed_movie = _minimal_movie_from_title(movie_title, source="input")
+
         if seed_movie is None:
             raise ValueError(
                 f"Movie '{movie_title}' not found. "
