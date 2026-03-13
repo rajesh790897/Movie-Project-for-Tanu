@@ -18,7 +18,7 @@ DEFAULT_MODEL = "gemini-1.5-flash"
 
 def gemini_enabled() -> bool:
     """Return True when the Gemini SDK is installed and an API key is set."""
-    return bool(genai and os.getenv("AIzaSyBBxd0u0pqp0hjLS0Ljn6jEQH6SAdSzrlc", "").strip())
+    return bool(genai and os.getenv("GEMINI_API_KEY", "").strip())
 
 
 def _clean_json_response(text: str) -> str:
